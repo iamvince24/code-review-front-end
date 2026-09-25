@@ -16,7 +16,14 @@ NOTES_HEADER = "## 備註"
 
 
 def review_home() -> str:
-    return os.path.expanduser(os.environ.get("FE_REVIEW_HOME", "~/.cursor/code-review-front-end"))
+    override = os.environ.get("FE_REVIEW_HOME")
+    if override:
+        return os.path.expanduser(override)
+    home = os.path.expanduser("~/.config/code-review-front-end")
+    legacy = os.path.expanduser("~/.cursor/code-review-front-end")
+    if not os.path.isdir(home) and os.path.isdir(legacy):
+        return legacy
+    return home
 
 
 def repo_root(path: str) -> str:

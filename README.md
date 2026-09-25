@@ -1,12 +1,11 @@
 # code-review-front-end
 
-Cursor skill，審查 React / Next.js、Angular、AngularJS 的前端 diff 與 PR。只回報能指出具體失敗情境的問題，不把偏好當成缺陷。
+審查 React / Next.js、Angular、AngularJS 的前端 diff 與 PR。只回報能指出具體失敗情境的問題，不把偏好當成缺陷。
 
 授權是 [MIT](LICENSE)。
 
 ## 需求
 
-- Cursor
 - Python 3.9+
 - git
 
@@ -14,34 +13,31 @@ Cursor skill，審查 React / Next.js、Angular、AngularJS 的前端 diff 與 P
 
 ## 安裝
 
-### Cursor Plugin
-
-這個 repo 根目錄有 `.cursor-plugin/plugin.json`。裝成 plugin 時，根目錄的 `SKILL.md` 與 `agents/` 裡的三個 reviewer 會一起載入，不必再跑安裝腳本。
-
-官方公開列表要等審核。作者送出後，從 Cursor Marketplace 搜尋 `code-review-front-end` 安裝。送審頁：[cursor.com/marketplace/publish](https://cursor.com/marketplace/publish)。
-
-Cursor Teams / Enterprise 可以直接匯入這個 GitHub repo：
-
-`https://github.com/iamvince24/code-review-front-end`
-
-### 手動安裝
-
 ```bash
-git clone https://github.com/iamvince24/code-review-front-end.git ~/.cursor/skills/code-review-front-end
-bash ~/.cursor/skills/code-review-front-end/scripts/install_agents.sh
+sh scripts/install.sh
 ```
 
-`install_agents.sh` 會把三個 reviewer symlink 到 `~/.cursor/agents/`。deep 模式才會派這些 agent。
+會把這個目錄 symlink 到：
+
+- `~/.cursor/skills/code-review-front-end`
+- `~/.claude/skills/code-review-front-end`
+- `~/.agents/skills/code-review-front-end`
+
+目錄本身已經是其中一個時略過該路徑。目標已存在且不是 symlink 時不覆蓋。三個宿主都讀各自目錄裡的 `SKILL.md`。
+
+deep 模式會派同目錄 `agents/` 裡的 `fe-review-correctness`、`fe-review-risk`、`fe-review-maintainability`。宿主沒有這些 custom agent 時，主 session 自己補做該面向。
 
 ## 使用
 
-在要審查的 repo 裡，請 Cursor 做前端 code review。沒有指定 PR、分支或檔案時，它會審查目前分支與未提交改動。
+在要審查的 repo 裡，請 agent 做前端 code review。沒有指定 PR、分支或檔案時，它會審查目前分支與未提交改動。
 
 可以指定：
 
 - 模式：`standard` 或 `deep`。沒指定時，小 diff 走 `standard`；前端 diff 超過 500 行或 20 個檔案，或碰到驗證、機密、HTML sink、Server Action、部署設定時走 `deep`。
 - 面向：`correctness`、`risk`、`maintainability`。
 - 預設模式：`python3 <skill>/scripts/profile_repos.py config <repo> --mode standard|deep`
+
+profile 預設寫到 `~/.config/code-review-front-end`。設 `FE_REVIEW_HOME` 可改位置。`~/.config/code-review-front-end` 還沒有、而 `~/.cursor/code-review-front-end` 已存在時，繼續讀舊目錄。
 
 `standard` 由主 session 自己審查。`deep` 最多派出 `fe-review-correctness`、`fe-review-risk`、`fe-review-maintainability`。
 

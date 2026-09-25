@@ -40,6 +40,46 @@ class ProfileTest(unittest.TestCase):
             self.assertEqual(result["mode"], expected)
             self.assertTrue(result["legacy"])
 
+    def test_review_home_defaults_to_config_dir(self):
+        home = tempfile.mkdtemp(prefix="fe-review-user.")
+        old_user = os.environ.get("HOME")
+        os.environ.pop("FE_REVIEW_HOME", None)
+        os.environ["HOME"] = home
+        try:
+            self.assertEqual(
+                profiles.review_home(),
+                os.path.join(home, ".config", "code-review-front-end"),
+            )
+        finally:
+            os.environ["FE_REVIEW_HOME"] = self.home
+            if old_user is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_user
+            shutil.rmtree(home, ignore_errors=True)
+
+    def test_review_home_reads_legacy_cursor_dir_until_config_exists(self):
+        home = tempfile.mkdtemp(prefix="fe-review-user.")
+        legacy = os.path.join(home, ".cursor", "code-review-front-end")
+        os.makedirs(legacy)
+        old_user = os.environ.get("HOME")
+        os.environ.pop("FE_REVIEW_HOME", None)
+        os.environ["HOME"] = home
+        try:
+            self.assertEqual(profiles.review_home(), legacy)
+            os.makedirs(os.path.join(home, ".config", "code-review-front-end"))
+            self.assertEqual(
+                profiles.review_home(),
+                os.path.join(home, ".config", "code-review-front-end"),
+            )
+        finally:
+            os.environ["FE_REVIEW_HOME"] = self.home
+            if old_user is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_user
+            shutil.rmtree(home, ignore_errors=True)
+
     def test_config_migrates_and_preserves_notes(self):
         path = profiles.profile_path(self.repo)
         os.makedirs(os.path.dirname(path), exist_ok=True)

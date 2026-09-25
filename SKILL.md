@@ -80,3 +80,13 @@ profile 只保存預設模式與個人備註。舊 profile 的 `max` 讀成 deep
 ```bash
 python3 <skill>/scripts/prepare_diff.py cleanup --dir <dir> --token <token>
 ```
+
+## 安裝
+
+這個目錄還沒出現在 skill 目錄時，執行：
+
+```bash
+sh <skill>/scripts/install.sh
+```
+
+會把這個目錄 symlink 到 `~/.cursor/skills/code-review-front-end`、`~/.claude/skills/code-review-front-end`、`~/.agents/skills/code-review-front-end`。這個目錄已經是其中一個時略過該路徑。目標已存在且不是 symlink 時不覆蓋。
