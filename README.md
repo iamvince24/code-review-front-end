@@ -25,28 +25,20 @@ sh scripts/install.sh
 
 目錄本身已經是其中一個時略過該路徑。目標已存在且不是 symlink 時不覆蓋。三個宿主都讀各自目錄裡的 `SKILL.md`。
 
-deep 模式會派同目錄 `agents/` 裡的 `fe-review-correctness`、`fe-review-risk`、`fe-review-maintainability`。宿主沒有這些 custom agent 時，主 session 自己補做該面向。
-
 ## 使用
 
 在要審查的 repo 裡，請 agent 做前端 code review。沒有指定 PR、分支或檔案時，它會審查目前分支與未提交改動。
 
 可以指定：
 
-- 模式：`standard` 或 `deep`。沒指定時，小 diff 走 `standard`；前端 diff 超過 500 行或 20 個檔案，或碰到驗證、機密、HTML sink、Server Action、部署設定時走 `deep`。
+- 模式：`standard` 或 `deep`。沒指定時，小 diff 走 `standard`；前端 diff 超過 500 行或 20 個檔案，或變更行碰到驗證、機密、HTML sink、Server Action、環境與部署設定時走 `deep`。
 - 面向：`correctness`、`risk`、`maintainability`。
-- 預設模式：`python3 <skill>/scripts/profile_repos.py config <repo> --mode standard|deep`
+- 檢查：只有明確要求時才執行本機 ESLint 與 TypeScript compiler。
 
-profile 預設寫到 `~/.config/code-review-front-end`。設 `FE_REVIEW_HOME` 可改位置。`~/.config/code-review-front-end` 還沒有、而 `~/.cursor/code-review-front-end` 已存在時，繼續讀舊目錄。
-
-`standard` 由主 session 自己審查。`deep` 最多派出 `fe-review-correctness`、`fe-review-risk`、`fe-review-maintainability`。
+兩種模式都由主 session 審查；`deep` 會讀取更多呼叫端、設定與框架脈絡。
 
 ## 測試
 
 ```bash
 python3 -m unittest discover -s scripts/tests
 ```
-
-## 設計筆記
-
-[doc/](doc/) 是這個 skill 的設計筆記，不是使用手冊。現行行為以 [SKILL.md](SKILL.md) 為準。

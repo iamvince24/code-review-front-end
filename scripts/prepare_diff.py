@@ -23,10 +23,6 @@ EXCLUDED_NAMES = {
 }
 EXCLUDED_PARTS = {"node_modules", "dist", "build", ".next", "coverage", "vendor"}
 LENSES = ("correctness", "risk", "maintainability")
-REMOVED_ARGS = {
-    "--since-last", "--only", "--skip", "--all", "--inline", "--no-inline", "--fix", "--json-out",
-    "setup", "stats", "stats-report",
-}
 SIGNALS = {
     "auth": re.compile(r"\b(auth|authorization|permission|role|session|login|logout|requireAdmin)\b", re.I),
     "secret": re.compile(r"\b(secret|token|password|api[_-]?key|NEXT_PUBLIC_)\b", re.I),
@@ -65,8 +61,8 @@ def safe_ref(value):
 
 
 def default_base(repo):
-    upstream = git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}", check=False)
-    candidates = [upstream.stdout.strip()] if upstream.returncode == 0 else []
+    remote_head = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False)
+    candidates = [remote_head.stdout.strip()] if remote_head.returncode == 0 else []
     candidates += ["origin/main", "origin/master", "main", "master"]
     for candidate in candidates:
         if not candidate:
@@ -149,31 +145,6 @@ def number_patch(patch):
     return "\n".join(output) + ("\n" if output else "")
 
 
-def changed_lines(patch):
-    result = {}
-    for chunk in split_chunks(patch):
-        path = path_from_chunk(chunk)
-        lines = set()
-        old_line = new_line = None
-        for line in chunk.splitlines():
-            match = re.match(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
-            if match:
-                old_line, new_line = int(match.group(1)), int(match.group(2))
-            elif old_line is None or line.startswith(("diff --git ", "index ", "--- ", "+++ ")):
-                continue
-            elif line.startswith("+"):
-                lines.add(new_line)
-                new_line += 1
-            elif line.startswith("-"):
-                lines.add(old_line)
-                old_line += 1
-            elif not line.startswith("\\"):
-                old_line += 1
-                new_line += 1
-        result[path] = sorted(lines)
-    return result
-
-
 def changed_count(patch):
     return sum(1 for line in patch.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---")))
 
@@ -227,25 +198,31 @@ def detect_frameworks(repo, files):
     return frameworks
 
 
+def changed_text(patch):
+    return "\n".join(
+        line[1:] for line in patch.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+
+
+def is_risk_config(path):
+    name = os.path.basename(path)
+    return name in {".npmrc", "angular.json"} or name.startswith(".env") or name.startswith("next.config.")
+
+
 def detect_signals(patch, files):
-    signals = [name for name, pattern in SIGNALS.items() if pattern.search(patch)]
-    if any(is_config(path) for path in files):
+    changed = changed_text(patch)
+    signals = [name for name, pattern in SIGNALS.items() if pattern.search(changed)]
+    if any(re.search(r"(^|/)route\.(?:ts|js)$", path) for path in files):
+        signals.append("server_boundary")
+    if any(is_risk_config(path) for path in files):
         signals.append("config")
     return sorted(set(signals))
 
 
-def load_profile_mode(repo):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    sys.path.insert(0, script_dir)
-    import profile_repos
-    return profile_repos.load(repo)["mode"]
-
-
-def choose_mode(explicit, profile, line_count, file_count, signals):
+def choose_mode(explicit, line_count, file_count, signals):
     if explicit:
         return explicit, f"使用者指定 {explicit}"
-    if profile == "deep":
-        return "deep", "profile 預設為 deep"
     reasons = []
     if line_count > 500:
         reasons.append(f"前端 diff {line_count} 行")
@@ -315,9 +292,12 @@ def prepare(args):
             marker["worktree"] = review_root
         lines = changed_count(patch)
         signals = detect_signals(patch, files)
-        profile_mode = load_profile_mode(repo)
-        mode, reason = choose_mode(args.mode, profile_mode, lines, len(files), signals)
-        lint, typecheck = best_effort_checks(repo, files, bool(head))
+        mode, reason = choose_mode(args.mode, lines, len(files), signals)
+        if args.checks:
+            lint, typecheck = best_effort_checks(repo, files, bool(head))
+        else:
+            lint = {"status": "skipped", "reason": "未要求執行本機檢查"}
+            typecheck = {"status": "skipped", "reason": "未要求執行本機檢查"}
         numbered = number_patch(patch)
         diff_path = os.path.join(outdir, "diff.patch")
         with open(diff_path, "w", encoding="utf-8") as handle:
@@ -344,7 +324,6 @@ def prepare(args):
             "excluded_files": excluded,
             "changed_line_count": lines,
             "risk_signals": signals,
-            "review_lines": changed_lines(patch),
             "lint": lint,
             "typecheck": typecheck,
             "spec": spec_path,
@@ -382,10 +361,6 @@ def cleanup(path, token):
 
 def main(argv=None):
     raw_args = list(sys.argv[1:] if argv is None else argv)
-    removed = next((item for item in raw_args if item.split("=", 1)[0] in REMOVED_ARGS), None)
-    if removed:
-        print(json.dumps({"status": "error", "error": f"舊介面 {removed} 已移除，不再支援"}, ensure_ascii=False))
-        return 2
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "cleanup"))
     parser.add_argument("--repo")
@@ -394,6 +369,7 @@ def main(argv=None):
     parser.add_argument("--mode", choices=("standard", "deep"))
     parser.add_argument("--focus")
     parser.add_argument("--spec")
+    parser.add_argument("--checks", action="store_true")
     parser.add_argument("--dir")
     parser.add_argument("--token")
     args = parser.parse_args(raw_args)

@@ -1,10 +1,6 @@
 import argparse
-import contextlib
-import io
-import json
 import os
 import shutil
-import tempfile
 import unittest
 
 from helpers import load, make_repo
@@ -16,20 +12,12 @@ prepare_diff = load("prepare_diff")
 class PrepareDiffTest(unittest.TestCase):
     def setUp(self):
         self.repo = make_repo()
-        self.home = tempfile.mkdtemp(prefix="fe-review-home.")
-        self.old_home = os.environ.get("FE_REVIEW_HOME")
-        os.environ["FE_REVIEW_HOME"] = self.home
 
     def tearDown(self):
-        if self.old_home is None:
-            os.environ.pop("FE_REVIEW_HOME", None)
-        else:
-            os.environ["FE_REVIEW_HOME"] = self.old_home
         shutil.rmtree(self.repo, ignore_errors=True)
-        shutil.rmtree(self.home, ignore_errors=True)
 
     def args(self, **overrides):
-        data = dict(repo=self.repo, base=None, head=None, mode=None, focus=None, spec=None)
+        data = dict(repo=self.repo, base=None, head=None, mode=None, focus=None, spec=None, checks=False)
         data.update(overrides)
         return argparse.Namespace(**data)
 
@@ -67,26 +55,37 @@ class PrepareDiffTest(unittest.TestCase):
         prepare_diff.cleanup(result["dir"], result["token"])
 
     def test_mode_boundaries_and_signals(self):
-        self.assertEqual(prepare_diff.choose_mode(None, "standard", 499, 19, [])[0], "standard")
-        self.assertEqual(prepare_diff.choose_mode(None, "standard", 500, 20, [])[0], "standard")
-        self.assertEqual(prepare_diff.choose_mode(None, "standard", 501, 20, [])[0], "deep")
-        self.assertEqual(prepare_diff.choose_mode(None, "standard", 500, 21, [])[0], "deep")
+        self.assertEqual(prepare_diff.choose_mode(None, 499, 19, [])[0], "standard")
+        self.assertEqual(prepare_diff.choose_mode(None, 500, 20, [])[0], "standard")
+        self.assertEqual(prepare_diff.choose_mode(None, 501, 20, [])[0], "deep")
+        self.assertEqual(prepare_diff.choose_mode(None, 500, 21, [])[0], "deep")
         for signal in ("auth", "secret", "html_sink", "server_boundary", "config"):
-            self.assertEqual(prepare_diff.choose_mode(None, "standard", 1, 1, [signal])[0], "deep")
-        self.assertEqual(prepare_diff.choose_mode("standard", "deep", 999, 99, ["auth"])[0], "standard")
+            self.assertEqual(prepare_diff.choose_mode(None, 1, 1, [signal])[0], "deep")
+        self.assertEqual(prepare_diff.choose_mode("standard", 999, 99, ["auth"])[0], "standard")
 
-    def test_behavior_cases_route_without_creating_findings(self):
-        xss = "dangerouslySetInnerHTML={{__html: html}}"
-        safe_html = "dangerouslySetInnerHTML={{__html: DOMPurify.sanitize(html)}}"
-        effect_cleanup = "useEffect(() => { const id = setInterval(tick); return () => clearInterval(id); }, [])"
-        prop_change = "type Props = { customerId: string }"
-        self.assertIn("html_sink", prepare_diff.detect_signals(xss, ["src/App.tsx"]))
-        self.assertIn("html_sink", prepare_diff.detect_signals(safe_html, ["src/App.tsx"]))
-        self.assertEqual(prepare_diff.detect_signals(effect_cleanup, ["src/App.tsx"]), [])
-        self.assertEqual(prepare_diff.detect_signals(prop_change, ["src/App.tsx"]), [])
-        self.assertEqual(prepare_diff.choose_mode(None, "standard", 8, 1, [])[0], "standard")
+    def test_risk_signals_only_scan_changed_content(self):
+        unchanged_secret = (
+            "diff --git a/src/App.tsx b/src/App.tsx\n"
+            "--- a/src/App.tsx\n+++ b/src/App.tsx\n"
+            "@@ -1,2 +1,2 @@\n const token = session.token\n-old\n+new\n"
+        )
+        self.assertEqual(prepare_diff.detect_signals(unchanged_secret, ["src/App.tsx"]), [])
+        changed_sink = unchanged_secret.replace("+new", "+dangerouslySetInnerHTML={{__html: html}}")
+        self.assertEqual(prepare_diff.detect_signals(changed_sink, ["src/App.tsx"]), ["html_sink"])
+        removed_auth = unchanged_secret.replace("-old", "-if (!session) return null")
+        self.assertEqual(prepare_diff.detect_signals(removed_auth, ["src/App.tsx"]), ["auth"])
+        self.assertEqual(prepare_diff.detect_signals("", ["app/api/order/route.ts"]), ["server_boundary"])
+        self.assertEqual(prepare_diff.detect_signals("", ["package.json"]), [])
+        self.assertEqual(prepare_diff.detect_signals("", ["next.config.js"]), ["config"])
 
-    def test_failed_local_checks_do_not_abort_prepare(self):
+    def test_local_checks_are_opt_in(self):
+        self.write("src/App.tsx", "export const App = () => <main>Hello</main>;\n")
+        result = prepare_diff.prepare(self.args())
+        self.assertEqual(result["lint"]["status"], "skipped")
+        self.assertEqual(result["lint"]["reason"], "未要求執行本機檢查")
+        prepare_diff.cleanup(result["dir"], result["token"])
+
+    def test_failed_requested_checks_do_not_abort_prepare(self):
         bin_dir = os.path.join(self.repo, "node_modules", ".bin")
         os.makedirs(bin_dir, exist_ok=True)
         for name in ("eslint", "tsc"):
@@ -96,7 +95,7 @@ class PrepareDiffTest(unittest.TestCase):
             os.chmod(path, 0o755)
         self.write("tsconfig.json", "{}\n")
         self.write("src/App.tsx", "export const App = () => <main>Hello</main>;\n")
-        result = prepare_diff.prepare(self.args(mode="standard"))
+        result = prepare_diff.prepare(self.args(mode="standard", checks=True))
         self.assertEqual(result["lint"]["status"], "failed")
         self.assertEqual(result["typecheck"]["status"], "failed")
         prepare_diff.cleanup(result["dir"], result["token"])
@@ -113,19 +112,27 @@ class PrepareDiffTest(unittest.TestCase):
         prepare_diff.git(self.repo, "add", ".")
         prepare_diff.git(self.repo, "commit", "-m", "feature")
         head = prepare_diff.git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        result = prepare_diff.prepare(self.args(base=base, head=head))
+        result = prepare_diff.prepare(self.args(base=base, head=head, checks=True))
         self.assertTrue(os.path.isdir(result["review_root"]))
         self.assertEqual(result["lint"]["status"], "skipped")
         review_root = result["review_root"]
         prepare_diff.cleanup(result["dir"], result["token"])
         self.assertFalse(os.path.exists(review_root))
 
-    def test_removed_interface_returns_clear_error(self):
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            status = prepare_diff.main(["prepare", "--repo", self.repo, "--since-last"])
-        self.assertEqual(status, 2)
-        self.assertIn("已移除，不再支援", output.getvalue())
+    def test_default_base_uses_remote_default_not_feature_upstream(self):
+        prepare_diff.git(self.repo, "branch", "-M", "main")
+        main = prepare_diff.git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        prepare_diff.git(self.repo, "update-ref", "refs/remotes/origin/main", main)
+        prepare_diff.git(self.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        prepare_diff.git(self.repo, "checkout", "-b", "feature")
+        self.write("src/App.tsx", "export const App = () => <main>Feature</main>;\n")
+        prepare_diff.git(self.repo, "add", ".")
+        prepare_diff.git(self.repo, "commit", "-m", "feature")
+        feature = prepare_diff.git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        prepare_diff.git(self.repo, "update-ref", "refs/remotes/origin/feature", feature)
+        prepare_diff.git(self.repo, "config", "branch.feature.remote", "origin")
+        prepare_diff.git(self.repo, "config", "branch.feature.merge", "refs/heads/feature")
+        self.assertEqual(prepare_diff.default_base(self.repo), main)
 
 
 if __name__ == "__main__":

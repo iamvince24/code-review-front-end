@@ -6,19 +6,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 
 class SkillShapeTest(unittest.TestCase):
-    def test_only_three_review_agents(self):
-        agents = sorted(name for name in os.listdir(os.path.join(ROOT, "agents")) if name.endswith(".md"))
-        self.assertEqual(agents, [
-            "fe-review-correctness.md",
-            "fe-review-maintainability.md",
-            "fe-review-risk.md",
+    def test_runtime_shape_stays_small(self):
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "agents")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "scripts", "aggregate.py")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "scripts", "profile_repos.py")))
+        self.assertEqual(sorted(os.listdir(os.path.join(ROOT, "references"))), [
+            "framework-notes.md",
+            "review-checklist.md",
         ])
 
-    def test_removed_interfaces_are_only_documented_as_removed(self):
+    def test_skill_entrypoint_is_concise(self):
         with open(os.path.join(ROOT, "SKILL.md"), encoding="utf-8") as handle:
             text = handle.read()
-        self.assertIn("已移除", text)
-        self.assertLessEqual(len(text.splitlines()), 100)
+        self.assertLessEqual(len(text.splitlines()), 70)
+        self.assertNotIn("profile", text.lower())
+        self.assertNotIn("aggregate", text.lower())
 
 
 if __name__ == "__main__":
